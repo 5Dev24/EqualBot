@@ -330,6 +330,10 @@ def main():
 	if not os.path.isdir(data_path):
 		os.makedirs(data_path, 0o744, True)
 
+	birthdays_path = os.path.join(_project_root, "data", "birthdays.json")
+	if not os.path.isfile(birthdays_path):
+		_write_json(birthdays_path, {})
+
 	dotenv.load_dotenv()
 
 	if os.getenv("ClientSecret") is None:
