@@ -107,14 +107,6 @@ python3 ./src/__main__.py
 ./src/__main__.py # If you can't run it, use `chmod +x ./src/__main__.py` to make the file executable
 ```
 
-I used the following script to start mine. The main thing is to remember to have the bash shebang else you'll run into issues with it saying that `source` cannot being found.
-
-```bash
-#!/bin/bash
-source ./venv/bin/active
-python3 ./src/__main__.py
-```
-
 Also running this as a sevice works so you don't have to manually start it everytime your server comes back online. Example below is mine.
 
 ```
@@ -125,8 +117,7 @@ StartLimitBurst=3
 StartLimitIntervalSec=20
 
 [Service]
-WorkingDirectory=/opt/EqualBot/
-ExecStart=/bin/bash /opt/EqualBot/start.sh
+ExecStart=/opt/EqualBot/venv/bin/python3 /opt/EqualBot/src/__main__.py
 Restart=on-failure
 RestartSec=3s
 
