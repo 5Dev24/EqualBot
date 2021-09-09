@@ -344,7 +344,7 @@ class EqualBot(discord.Client):
 
 									await message.reply(embed = discord.Embed(title = "chaos confirm Command", description = "Post confirmed", color = discord.Color.green()), mention_author=False)
 
-									self.update_leaderboard()
+									await self.update_leaderboard()
 						else:
 							await message.reply(embed = discord.Embed(title = "chaos confirm Command", description = "No post", color = discord.Color.dark_blue())\
 								.add_field(name = "You need to attempt to make a post before you can confirm one", value = f"Use `chaos post <message>`"), mention_author=False)
