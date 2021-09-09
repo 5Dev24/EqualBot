@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
+from typing import Union, Dict
 from pathlib import Path
-from typing import Union
 import datetime
 import discord
 import dotenv
 import time
 import json
 import os
+
+# Next version needs to implement thread safety
 
 def _read_json(path: str) -> dict:
 	with open(path, "r") as json_file:
@@ -40,7 +42,10 @@ class EqualBot(discord.Client):
 		self.leaderboard_channel_id = bot_config.get("Leaderboard Channel ID", None)
 		self.equal_channel_id = bot_config.get("Equal Channel ID", None)
 		self.equal_role_id = bot_config.get("Equal Role ID", None)
+		self.chaos_channel_id = bot_config.get("Chaos Channel ID", None)
 		self.historical_purge = bot_config.get("Historical Purge", False)
+
+		self.posts_to_confirm: Dict[int, str] = {}
 
 		birthday_data = _read_json(os.path.join(_project_root, "data", "birthdays.json"))
 
@@ -74,25 +79,21 @@ class EqualBot(discord.Client):
 
 	async def increase_chaos(self, user_id: Union[int, str], user_name: str):
 		user_id = str(user_id)
-
 		chaos_data = _read_json(self.chaos_file_path)
 
 		if user_id not in chaos_data:
-			chaos_data[user_id] = {"name": user_name, "points": 0}
+			chaos_data[user_id] = {"name": user_name, "points": 0, "chaos_posts": []}
 
 		chaos_data[user_id]["points"] += 1
-
 		_write_json(self.chaos_file_path, chaos_data)
-
 		await self.update_leaderboard()
 
 	async def decrease_chaos(self, user_id: Union[int, str], user_name: str):
 		user_id = str(user_id)
-
 		chaos_data = _read_json(self.chaos_file_path)
 
 		if user_id not in chaos_data:
-			chaos_data[user_id] = {"name": user_name, "points": 0}
+			chaos_data[user_id] = {"name": user_name, "points": 0, "chaos_posts": []}
 
 		chaos_data[user_id]["points"] -= 1
 
@@ -100,21 +101,22 @@ class EqualBot(discord.Client):
 			chaos_data[user_id]["points"] = 0
 
 		_write_json(self.chaos_file_path, chaos_data)
-
 		await self.update_leaderboard()
 
 	async def generate_leaderboard_messaage(self) -> str:
 		chaos_data = _read_json(self.chaos_file_path)
 
 		longest_username_length = max(chaos_data.values(), key = lambda x: x["name"].__len__())["name"].__len__()
-		longest_chaos_points = max(chaos_data.values(), key = lambda x: x["points"].__str__().__len__())["points"].__str__().__len__()
+		longest_chaos_points = max(chaos_data.values(), key = lambda x: (x["points"] - x["chaos_posts"].__len__() * 50).__str__().__len__())
+		longest_chaos_points = (longest_chaos_points["points"] - longest_chaos_points["chaos_posts"].__len__() * 50).__str__().__len__()
+		longest_chaos_posts = max(chaos_data.values(), key = lambda x: x["chaos_posts"].__len__().__str__().__len__())["chaos_posts"].__len__().__str__().__len__()
 
-		output = "```md"
+		output = ""
 
 		for user_data in sorted(chaos_data.values(), key = lambda x: x["points"], reverse = True):
-			output += f"\n[ {user_data['name']:<{longest_username_length}} ][ {user_data['points']:>{longest_chaos_points}} ]"
+			output += f"\n[ {user_data['name']:<{longest_username_length}} ][ {(user_data['points'] - user_data['chaos_posts'].__len__() * 50):^{longest_chaos_points}} ][ {user_data['chaos_posts'].__len__():>{longest_chaos_posts}} ]"
 
-		return output + "\n```"
+		return f"```md{output}\n```"
 
 	async def update_leaderboard(self):
 		leaderboard: discord.TextChannel = self.get_channel(self.leaderboard_channel_id)
@@ -168,7 +170,7 @@ class EqualBot(discord.Client):
 				async for message in equal_channel.history(limit = None):
 					author_id = str(message.author.id)
 					if author_id not in chaos_data:
-						chaos_data[author_id] = {"name": message.author.name, "points": 0}
+						chaos_data[author_id] = {"name": message.author.name, "points": 0, "chaos_posts": []}
 
 					check = await self.check_message(message)
 					if check == 1:
@@ -223,8 +225,17 @@ class EqualBot(discord.Client):
 
 			return -1
 
+	def get_balance(self, user_id: int) -> int:
+		user_id = str(user_id)
+		chaos_data = _read_json(self.chaos_file_path)
+
+		if user_id not in chaos_data:
+			return 0
+
+		return chaos_data[user_id]["points"] - chaos_data[user_id]["chaos_posts"].__len__() * 50
+
 	async def message_handle(self, message: discord.Message, edited: bool = False):
-		if message.guild is None: # Unmanaged, DMs
+		if message.guild is None and not edited: # Unmanaged, DMs
 			contents = message.clean_content.lower().replace("\n", " ").split(" ")
 
 			cmd, args = contents[0], contents[1:]
@@ -281,6 +292,85 @@ class EqualBot(discord.Client):
 					await message.reply(embed = discord.Embed(title = "bday Command", description = "Use `bday` **<**`month`**>** **<**`day`**>**", color = discord.Color.dark_blue())\
 						.add_field(name = "month", value = "The month can be a three letter abbreviation (Jan, Feb, Nov, or Dec), full names (April, August, September, or July), or a number (3, 5, 6, or 10)", inline = False)\
 						.add_field(name = "day", value = "The day must be a number (1 to 28/29/30/31)", inline = False), mention_author=False)
+
+			elif cmd == "chaos":
+				if args.__len__():
+					subcommand = args[0].lower()
+					args = args[1:]
+
+					if subcommand == "balance":
+						await message.reply(embed = discord.Embed(title = "chaos balance Command", description = f"Your balance is {self.get_balance(message.author.id)}", color = discord.Color.green()), mention_author=False)
+
+					elif subcommand == "post":
+						balance = self.get_balance(message.author.id)
+
+						if balance < 50:
+							await message.reply(embed = discord.Embed(title = "chaos post Command", description = "Insufficient funds", color = discord.Color.red())\
+								.add_field(name = "It costs 50 chaos points to make a chaotic post", value = f"Your balance is {balance}"), mention_author=False)
+						else:
+							to_post = message.clean_content[11:]
+							self.posts_to_confirm[message.author.id] = to_post
+
+							await message.reply(embed = discord.Embed(title = "chaos post Command", description = "Confirm post", color = discord.Color.green())\
+								.add_field(name = f"You'll have {balance - 50} chaos point{'' if (balance - 50) == 1 else 's'} left, confirm post below", value = f"{to_post}", inline = False)\
+								.add_field(name = "Use `chaos confirm` to make this post", value = "This will take 50 chaos points", inline = False)\
+								.add_field(name = "Use `chaos cancel` to cancel this post", value = "This will cancel this post", inline = False), mention_author=False)
+
+					elif subcommand == "confirm":
+						if message.author.id in self.posts_to_confirm:
+							balance = self.get_balance(message.author.id)
+
+							if balance < 50:
+								del self.posts_to_confirm[message.author.id]
+								await message.reply(embed = discord.Embed(title = "chaos confirm Command", description = "Insufficient funds", color = discord.Color.red())\
+									.add_field(name = "It costs 50 chaos points to make a chaotic post", value = f"Your balance is {balance}"), mention_author=False)
+							else:
+								chaos_channel: discord.TextChannel = self.get_channel(self.chaos_channel_id)
+
+								if chaos_channel is None:
+									print(f"Unable to post to chaos channel, couldn't find channel with id \"{self.chaos_channel_id}\"")
+									await message.reply(embed = discord.Embed(title = "chaos confirm Command", description = "Post failure", color = discord.Color.red())\
+										.add_field(name = "Cannot post right now", value = "Unable to locate chaos text channel", inline = False), mention_author=False)
+
+								else:
+									post = self.posts_to_confirm[message.author.id]
+									await chaos_channel.send(f"{post}")
+
+									chaos_data = _read_json(self.chaos_file_path)
+									chaos_data[str(message.author.id)]["chaos_posts"].append(post)
+									_write_json(self.chaos_file_path, chaos_data)
+
+									del self.posts_to_confirm[message.author.id]
+
+									await message.reply(embed = discord.Embed(title = "chaos confirm Command", description = "Post confirmed", color = discord.Color.green()), mention_author=False)
+
+									self.update_leaderboard()
+						else:
+							await message.reply(embed = discord.Embed(title = "chaos confirm Command", description = "No post", color = discord.Color.dark_blue())\
+								.add_field(name = "You need to attempt to make a post before you can confirm one", value = f"Use `chaos post <message>`"), mention_author=False)
+
+					elif subcommand == "cancel":
+						if message.author.id in self.posts_to_confirm:
+							del self.posts_to_confirm[message.author.id]
+							await message.reply(embed = discord.Embed(title = "chaos cancel Command", description = "Post cancelled", color = discord.Color.green()), mention_author=False)
+
+						else:
+							await message.reply(embed = discord.Embed(title = "chaos cancel Command", description = "No post", color = discord.Color.dark_blue())\
+								.add_field(name = "You need to attempt to make a post before you can cancel one", value = f"Use `chaos post <message>`"), mention_author=False)
+
+					else:
+						await message.reply(embed = discord.Embed(title = "chaos Command", description = "Invalid subcommand", color = discord.Color.red())\
+							.add_field(name = "balance", value = "Get your balance of chaos points", inline = False)\
+							.add_field(name = "post", value = "Send a chaotic message at the cost of 50 chaos points", inline = False)\
+							.add_field(name = "confirm", value = "Confirm to send a chaotic message", inline = False)\
+							.add_field(name = "cancel", value = "Cancel the posting of a chaotic message", inline = False), mention_author=False)
+
+				else:
+					await message.reply(embed = discord.Embed(title = "chaos Command", description = "chaos subcommands:", color = discord.Color.dark_blue())\
+						.add_field(name = "balance", value = "Get your balance of chaos points", inline = False)\
+						.add_field(name = "post", value = "Send a chaotic message at the cost of 50 chaos points", inline = False)\
+						.add_field(name = "confirm", value = "Confirm to send a chaotic message", inline = False)\
+						.add_field(name = "cancel", value = "Cancel the posting of a chaotic message", inline = False), mention_author=False)
 
 		else: # Managed, Guilds
 			check = await self.check_message(message)
