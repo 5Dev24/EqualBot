@@ -236,7 +236,7 @@ class EqualBot(discord.Client):
 					del args
 
 					try:
-						month = _months.index(month) % 13
+						month = _months.index(month) % 12
 					except ValueError:
 						await message.reply(embed = discord.Embed(title = "bday Command", description = "Invalid month", color = discord.Color.red())\
 							.add_field(name = "month", value = f"The month can be a three letter abbreviation (Jan, Feb, Nov, or Dec), full names (April, August, September, or July), or a number (3, 5, 6, or 10)\n\nNot \"{month}\""), mention_author=False)
